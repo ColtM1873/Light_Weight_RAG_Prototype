@@ -1,0 +1,29 @@
+# Python 依赖（Python 3.13）
+# 安装：uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+# 或：  .venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Agent / 图
+langchain>=1.5,<2
+langgraph>=1.2,<2
+langchain-core>=1.8,<2
+
+# 模型 provider
+langchain-deepseek>=1.1,<2
+langchain-openai>=1.8,<2
+
+# RAG / 向量
+langchain-huggingface>=1.2,<2
+faiss-cpu>=1.16,<2
+numpy>=2.5,<3
+sentence-transformers>=6.3,<7
+# torch：默认从 PyPI 安装。国内/CPU 环境建议改用：
+#   uv pip install --python .venv\Scripts\python.exe torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.13
+
+# 服务 / 配置 / 测试
+fastapi>=0.162,<1
+uvicorn>=0.54,<1
+python-dotenv>=1.1
+pydantic>=2.14,<3
+typing_extensions>=4.15
+pytest>=8,<10

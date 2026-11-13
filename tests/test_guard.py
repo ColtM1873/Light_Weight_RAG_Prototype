@@ -8,16 +8,21 @@ from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.graph.state import END, START, StateGraph
 
-from build_the_world import TheWorld  # noqa: F401 - 验证顶层可导入
-from guard_nodes import MAX_STEPS, make_guard_nodes, route_after_model_a
-from guard_schemas import AnswerStatus, Citation, StructuredAnswer
-from guard_validators import (
+from knowledge_agent.graph import TheWorld, assemble_graph  # noqa: F401 - 验证顶层可导入
+from knowledge_agent.nodes import MAX_STEPS, make_guard_nodes, route_after_model_a
+from knowledge_agent.schemas import (
+    AnswerStatus,
+    Citation,
+    StructuredAnswer,
+    SupportVerdict,
+)
+from knowledge_agent.state import ExtendedMessagesState
+from knowledge_agent.validators import (
     content_to_text,
     make_feedback,
     missing_required_fields,
     validate_citations,
 )
-from variant_message_state import ExtendedMessagesState
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +280,7 @@ def test_content_to_text_handles_blocks():
 
 
 def test_evidence_pack_mentions_no_tools():
-    from guard_nodes import build_evidence_pack
+    from knowledge_agent.nodes import build_evidence_pack
 
     pack = build_evidence_pack(
         {
@@ -290,8 +295,6 @@ def test_evidence_pack_mentions_no_tools():
 # ---------------------------------------------------------------------------
 # 集成：完整图流转（脚本化模型，不调用真实 LLM）
 # ---------------------------------------------------------------------------
-from build_the_world import assemble_graph
-from guard_schemas import SupportVerdict
 
 
 class _ScriptedStructured:
@@ -341,7 +344,7 @@ UNSUPPORT = SupportVerdict(support="unsupported", error_type="overclaim", reason
 
 
 def _run_graph(answers, b_script, c_script, monkeypatch):
-    import guard_nodes
+    import knowledge_agent.nodes as guard_nodes
 
     monkeypatch.setattr(guard_nodes, "validate_citations", lambda citations: [])
     model = _ScriptedModel(answers, b_script, c_script)
@@ -356,13 +359,14 @@ def _run_graph(answers, b_script, c_script, monkeypatch):
     return asyncio.run(graph.ainvoke({"messages": [HumanMessage(content="问题", id="u1")]}))
 
 
-def test_happy_path_ends_directly(monkeypatch):
-    """两个 Guard 都一次过：不注入 finalize，直接 END。"""
-    out = _run_graph(["最终答案"], [OK_ANSWER], [SUPPORT], monkeypatch)
+def test_one_pass_still_finalizes(monkeypatch):
+    """两个 Guard 都一次过：仍然必须经过 finalize，再输出最终回复。"""
+    out = _run_graph(["初稿答案", "整理后的最终答案"], [OK_ANSWER], [SUPPORT], monkeypatch)
     assert out["debate_flag"] is False
     assert out["feedback_injected"] is False
-    assert out["messages"][-1].content == "最终答案"
-    assert not any(
+    assert out["phase"] == "final"
+    assert out["messages"][-1].content == "整理后的最终答案"
+    assert any(
         getattr(m, "additional_kwargs", {}).get("guard_kind") == "finalize"
         for m in out["messages"]
     )
@@ -397,3 +401,43 @@ def test_debate_triggers_finalize(monkeypatch):
         getattr(m, "additional_kwargs", {}).get("guard_kind") == "finalize"
         for m in out["messages"]
     )
+
+
+class _LoopToolModel:
+    """永远要求调用工具，用来触发步数上限。"""
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+    def with_structured_output(self, schema):
+        return self
+
+    async def ainvoke(self, messages):
+        return AIMessage(
+            content="",
+            tool_calls=[{"name": "not_available", "args": {}, "id": "call-loop"}],
+        )
+
+
+def test_step_limit_returns_incomplete_status(monkeypatch):
+    import knowledge_agent.nodes as guard_nodes
+
+    monkeypatch.setattr(guard_nodes, "MAX_STEPS", 6)
+    model = _LoopToolModel()
+    nodes = make_guard_nodes(
+        main_model=model,
+        main_model_with_tools=model,
+        main_system_prompt="test",
+        hash_check_fn=lambda: False,
+        index_ready_fn=lambda: None,
+    )
+    graph = assemble_graph(nodes)
+    out = asyncio.run(
+        graph.ainvoke(
+            {"messages": [HumanMessage(content="循环", id="u1")]},
+            config={"recursion_limit": 40},
+        )
+    )
+    assert out["step_count"] >= 6
+    assert "未完成" in out["messages"][-1].content
+    assert "步上限" in out["messages"][-1].content

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>企业知识问答 Agent · RAG + Guard</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      max-width: 960px;
+      margin: 28px auto;
+      padding: 0 16px 40px;
+      color: #1f2328;
+      background: #fff;
+    }
+    h2 { margin: 0 0 4px; font-size: 21px; }
+    .hint { color: #666; font-size: 13px; margin-bottom: 12px; line-height: 1.6; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+    .chip {
+      border: 1px solid #d7dde5; background: #f7f9fc; color: #2f5f9e;
+      border-radius: 999px; padding: 7px 12px; font-size: 13px; cursor: pointer;
+    }
+    .chip:hover { background: #eef4fc; border-color: #b9cdea; }
+    #log {
+      border: 1px solid #dde3ea;
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 340px;
+      max-height: 66vh;
+      overflow-y: auto;
+      background: #fbfcfe;
+    }
+    .msg {
+      margin: 10px 0;
+      padding: 9px 12px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+    }
+    .msg .meta {
+      font-size: 11px;
+      letter-spacing: .02em;
+      color: #5b6570;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .msg .body {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .human { background: #e8f1fd; border-color: #c6dcf7; }
+    .ai    { background: #e9f7ec; border-color: #c3e6cb; }
+    .tool  { background: #fff8e1; border-color: #f1dfa6; }
+    .tool .body { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+    .guard { background: #f3edff; border-color: #d9c8f5; }
+    .guard .body { font-size: 13px; }
+    .status { background: #e8f4f8; border-color: #b9dce8; }
+    .status .body { font-size: 13px; }
+    .error { background: #fdecea; border-color: #f5c6cb; }
+    .row { display: flex; gap: 10px; margin-top: 14px; }
+    input {
+      flex: 1;
+      padding: 11px 14px;
+      font-size: 15px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      outline: none;
+    }
+    input:focus { border-color: #6a9ee8; }
+    button.primary {
+      padding: 11px 20px;
+      font-size: 15px;
+      border: none;
+      border-radius: 8px;
+      background: #2f6fd0;
+      color: #fff;
+      cursor: pointer;
+    }
+    button.primary:disabled { background: #9db8dc; cursor: default; }
+    .footer { margin-top: 10px; color: #8a929b; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h2>企业知识问答 Agent · RAG + Guard</h2>
+  <div class="hint">
+    回答流程：检索文档 → 观察结果 → 补充检索 / 读全文 / 查版本日期 → 作答 → 引用与证据双 Guard 校验。<br />
+    Human / Tool / AI 消息按执行顺序出现；紫色卡片是 Guard 判定，蓝色卡片是本轮结构化任务状态（引用 / 资料缺口 / 完成状态）。纯文本显示，不渲染 Markdown。
+  </div>
+
+  <div class="chips">
+    <button class="chip" data-q="出差住宿标准是多少？">明确答案：住宿标准</button>
+    <button class="chip" data-q="差旅报销期限是多久？">文档冲突：报销期限</button>
+    <button class="chip" data-q="公司年会在哪里举办？">资料外：年会地点</button>
+    <button class="chip" data-q="差旅费需要在几天内提交报销？">改写问题：报销期限</button>
+  </div>
+
+  <div id="log"></div>
+  <div class="row">
+    <input id="q" placeholder="输入问题，例如：出差住宿标准是多少？" autocomplete="off" />
+    <button class="primary" id="send">发送</button>
+  </div>
+  <div class="footer">同一页面内的追问共享 <code>thread_id</code>；刷新页面即开新会话。服务端 8010。</div>
+
+  <script>
+    const logEl = document.getElementById("log");
+    const inputEl = document.getElementById("q");
+    const sendBtn = document.getElementById("send");
+    const threadId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    const MAX_TOOL_CHARS = 1000;
+    let busy = false;
+
+    function renderContent(type, content) {
+      if (type === "tool" && content.length > MAX_TOOL_CHARS) {
+        return content.slice(0, MAX_TOOL_CHARS) +
+          "\n…（已截断，完整内容 " + content.length + " 字）";
+      }
+      return content;
+    }
+
+    function append(type, label, content) {
+      const box = document.createElement("div");
+      box.className = "msg " + type;
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = label;
+
+      const body = document.createElement("div");
+      body.className = "body";
+      body.textContent = content;
+
+      box.appendChild(meta);
+      box.appendChild(body);
+      logEl.appendChild(box);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setBusy(value) {
+      busy = value;
+      sendBtn.disabled = value;
+      sendBtn.textContent = value ? "处理中…" : "发送";
+    }
+
+    function send(text) {
+      if (!text || busy) return;
+      inputEl.value = "";
+      append("human", "Human（你）", text);
+      setBusy(true);
+
+      const url =
+        "/api/chat?message=" + encodeURIComponent(text) +
+        "&thread_id=" + encodeURIComponent(threadId);
+      const es = new EventSource(url);
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          append(data.type, data.label, renderContent(data.type, data.content));
+        } catch (err) {
+          console.error("无法解析消息：", err);
+        }
+      };
+
+      es.addEventListener("done", () => {
+        es.close();
+        setBusy(false);
+      });
+
+      es.addEventListener("failed", (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          append("error", "错误", data.message);
+        } catch (err) {
+          append("error", "错误", "请求失败");
+        }
+        es.close();
+        setBusy(false);
+      });
+
+      es.onerror = () => {
+        if (es.readyState === EventSource.CLOSED) {
+          setBusy(false);
+        }
+      };
+    }
+
+    sendBtn.addEventListener("click", () => send(inputEl.value.trim()));
+    inputEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") send(inputEl.value.trim());
+    });
+    document.querySelectorAll(".chip").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        inputEl.value = chip.dataset.q;
+        inputEl.focus();
+      });
+    });
+  </script>
+</body>
+</html>

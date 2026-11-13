@@ -1,0 +1,182 @@
+{
+  "schema_version": 2,
+  "case_id": "offline-no-support",
+  "title": "资料外问题（离线 Mock）",
+  "mode": "offline-mock",
+  "model": {
+    "name": "scripted (offline)"
+  },
+  "created_at": "2026-11-14T04:34:24+08:00",
+  "acceptance_points": [
+    "资料外问题"
+  ],
+  "questions": [
+    "公司年会在哪里举办？"
+  ],
+  "turns": [
+    {
+      "turn": 1,
+      "question": "公司年会在哪里举办？",
+      "events": [
+        {
+          "kind": "user",
+          "node": "input",
+          "label": "用户",
+          "content": "公司年会在哪里举办？",
+          "next_action": "初始化完成；hash_changed=False；history_cleared=False；index_rebuild_error=None",
+          "decision_basis": "接收用户问题"
+        },
+        {
+          "kind": "node",
+          "node": "init_turn",
+          "label": "节点：init_turn",
+          "content": "初始化完成；hash_changed=False；history_cleared=False；index_rebuild_error=None",
+          "state": {
+            "hash_changed": false,
+            "history_cleared": false,
+            "index_rebuild_error": null
+          },
+          "next_action": "模型继续调用工具：query_the_docs",
+          "decision_basis": "完成本轮初始化"
+        },
+        {
+          "kind": "ai",
+          "node": "call_main_llm",
+          "label": "AI（Model A）",
+          "content": "→ 调用工具：query_the_docs",
+          "tool_calls": [
+            {
+              "id": "call-nosupport-1",
+              "name": "query_the_docs",
+              "args": {
+                "query_str": "公司年会 举办地点",
+                "number_of_retrieval": 4
+              }
+            }
+          ],
+          "batch_id": "batch-b9d82d30",
+          "next_action": "执行工具 query_the_docs",
+          "decision_basis": "根据问题与已有观察，选择工具补充证据"
+        },
+        {
+          "kind": "tool",
+          "node": "tool_node",
+          "label": "工具：query_the_docs",
+          "tool_name": "query_the_docs",
+          "tool_args": {
+            "query_str": "公司年会 举办地点",
+            "number_of_retrieval": 4
+          },
+          "tool_call_id": "call-nosupport-1",
+          "batch_id": "batch-b9d82d30",
+          "content": "[{\"document_id\": 3, \"piece_content\": \"# 2025 年年终奖发放章程## 一、目的与适用范围第一条 为肯定员工年度贡献，激励优秀人才，规范年终奖发放管理，特制定本章程。第二条 本章程适用于截至 2025 年 12 月 31 日在职的全体正式员工。试用期员工、已提交离职申请的员工及劳务派遣人员不适用本章程，另有协议约定的从其约定。## 二、发放条件第三条 公司年度经营业绩达成率不低于 80% 时，发放年终奖。达成率低于 80% 的，由董事会决定是否缩减或取消发放。第四条 员工个人年度绩效考核结果须为 C 级（合格）及以上。考核为 D 级（待改进）或 E 级（不合格）的员工，不发放年终奖。第五条 员工在考核年度内累计旷工超过三天的，\", \"piece_id\": 7, \"piece_type\": \"chunk\"}, {\"document_id\": 3, \"piece_content\": \"第五条 员工在考核年度内累计旷工超过三天的，或受到记过及以上纪律处分的，取消年终奖。## 三、计算规则第六条 年终奖基数 = 员工月基本工资 × 2。第七条 年终奖实发金额 = 基数 × 公司系数 × 个人系数。其中：（一）公司系数由董事会根据年度经营业绩确定，范围为 0.8 至 1.5。（二）个人系数由年度绩效考核等级确定：S 级为 1.5，A 级为 1.2，B 级为 1.0，C 级为 0.6。第八条 年中入职的员工，按实际在岗月数折算。折算公式：年终奖 = 应发金额 × 在岗月数 ÷ 12。在岗不足一个月的按一个月计。## 四、发放时间与方式\", \"piece_id\": 8, \"piece_type\": \"chunk\"}, {\"document_id\": 6, \"piece_content\": \"未经批准的自愿延时不计加班。## Q5：年终奖什么时候发？年终奖于次年一月最后五个工作日内随工资发放。发放对象为截至 12 月 31 日在职且年度考核合格以上的正式员工。## Q6：社保公积金基数是多少？社保公积金按员工上年度月平均工资作为缴费基数，基数上限和下限按当地政策执行。每年七月统一调整一次。## Q7：商业保险包括哪些？公司为正式员工投保补充医疗保险和意外伤害保险。补充医疗覆盖门诊及住院，年度免赔额 200 元，赔付比例 90%，年度赔付上限 2 万元。## Q8：年假怎么计算？累计工作满一年不满十年的，年休假五天；满十年不满二十年的，年休假十天；满二十年的，年休假十五天。\", \"piece_id\": 19, \"piece_type\": \"chunk\"}, {\"document_id\": 3, \"piece_content\": \"## 四、发放时间与方式第九条 年终奖于次年一月最后五个工作日内随工资一并发放，并依法代扣代缴个人所得税。第十条 年终奖以银行转账方式发放至员工工资卡，不发放现金。## 五、特殊情况第十一条 休产假、病假的员工，在岗月数按实际出勤折算，但法定产假期间视为在岗。第十二条 员工在年终奖发放日前离职的，不享受当年年终奖。因公司原因解除劳动合同的，按实际在岗月数折算发放。## 六、附则第十三条 本章程由人力资源部负责解释与修订。员工对计算结果有异议的，可在发放后十个工作日内向人力资源部书面申诉。第十四条 本章程自 2025 年 1 月 1 日起施行。\", \"piece_id\": 9, \"piece_type\": \"chunk\"}]",
+          "next_action": "模型生成答复",
+          "decision_basis": "观察到工具返回 1461 字的结果"
+        },
+        {
+          "kind": "ai",
+          "node": "call_main_llm",
+          "label": "AI（Model A）",
+          "content": "我在现有文档库里没有找到与“公司年会举办地点”相关的资料。\n资料缺口：年会地点、时间及组织方。现有文档覆盖差旅报销、年终奖、云办公、招聘入职、薪酬福利、CRM 和信息安全，无法回答这个问题。",
+          "tool_calls": [],
+          "batch_id": "batch-0af921e3",
+          "next_action": "Guard 1 通过：引用 0 条；任务状态 done=False, conflict=False, no_support=True",
+          "decision_basis": "认为已有依据足够，停止检索并给出答复"
+        },
+        {
+          "kind": "node",
+          "node": "guard_parse",
+          "label": "节点：guard_parse",
+          "guard": "parse",
+          "ok": true,
+          "parsed_answer": {
+            "natural_language_reply": "我在现有文档库里没有找到与“公司年会举办地点”相关的资料。\n资料缺口：年会地点、时间及组织方。现有文档覆盖差旅报销、年终奖、云办公、招聘入职、薪酬福利、CRM 和信息安全，无法回答这个问题。",
+            "citations": [],
+            "gaps": [
+              "年会地点、时间及组织方"
+            ],
+            "status": {
+              "done": false,
+              "conflict": false,
+              "no_support": true
+            }
+          },
+          "parse_attempts": 1,
+          "content": "Guard 1 通过：引用 0 条；任务状态 done=False, conflict=False, no_support=True",
+          "next_action": "Guard 2 判定：support（error_type=none）；理由：文档内容支持该回复。",
+          "decision_basis": "Guard 1 通过后进入支持性判定"
+        },
+        {
+          "kind": "node",
+          "node": "guard_support",
+          "label": "节点：guard_support",
+          "guard": "support",
+          "ok": true,
+          "support_verdict": {
+            "support": "support",
+            "error_type": "none",
+            "reason": "文档内容支持该回复。"
+          },
+          "support_attempts": 1,
+          "evidence_pack_chars": 1800,
+          "content": "Guard 2 判定：support（error_type=none）；理由：文档内容支持该回复。",
+          "next_action": "进入 Guard 反馈（finalize）",
+          "decision_basis": "Guard 2 通过后结束或进入最终整理"
+        },
+        {
+          "kind": "guard",
+          "node": "finalize",
+          "label": "Guard 反馈：finalize",
+          "guard_kind": "finalize",
+          "guard": "finalize",
+          "ok": true,
+          "content": "现在请给出给用户的最终回复。\n要求：\n1. 保留结构化的内容：引用的文档 ID 与原文片段、资料缺口、任务状态；\n2. 把结构化内容和流利、自然的文字说明放在一起，读起来像一段完整的答复；\n3. 这是面向用户的最终版本，不要再提我们之间的核对或讨论过程，也不要用\"更正说明\"的口吻；\n4. 直接给出结论、依据和必要的说明即可。\n",
+          "next_action": "模型生成答复",
+          "decision_basis": "Guard 通过后进入最终整理"
+        },
+        {
+          "kind": "ai",
+          "node": "call_main_llm",
+          "label": "AI（Model A）",
+          "content": "我在现有文档库里没有找到与“公司年会举办地点”相关的资料。\n资料缺口：年会地点、时间及组织方。现有文档覆盖差旅报销、年终奖、云办公、招聘入职、薪酬福利、CRM 和信息安全，无法回答这个问题。\n\n如果你能提供年会相关文件，我可以再检索。",
+          "tool_calls": [],
+          "batch_id": "batch-af351536",
+          "next_action": "本轮结束",
+          "decision_basis": "认为已有依据足够，停止检索并给出答复"
+        }
+      ],
+      "final_answer": "我在现有文档库里没有找到与“公司年会举办地点”相关的资料。\n资料缺口：年会地点、时间及组织方。现有文档覆盖差旅报销、年终奖、云办公、招聘入职、薪酬福利、CRM 和信息安全，无法回答这个问题。\n\n如果你能提供年会相关文件，我可以再检索。",
+      "step_count": 8,
+      "tool_calls": 1,
+      "completed": true,
+      "hit_step_limit": false,
+      "feedback_injected": false,
+      "debate_flag": false,
+      "index_rebuild_error": null,
+      "task_status": {
+        "done": false,
+        "conflict": false,
+        "no_support": true,
+        "label": "资料不足，未给出确定答案",
+        "guard1": "pass",
+        "guard2": "support",
+        "feedback_injected": false,
+        "debate_flag": false,
+        "step_count": 8,
+        "tool_calls": 1,
+        "completed": true,
+        "hit_step_limit": false,
+        "index_rebuild_error": null
+      },
+      "citations": [],
+      "gaps": [
+        "年会地点、时间及组织方"
+      ],
+      "support_verdict": {
+        "support": "support",
+        "error_type": "none",
+        "reason": "文档内容支持该回复。"
+      }
+    }
+  ]
+}
