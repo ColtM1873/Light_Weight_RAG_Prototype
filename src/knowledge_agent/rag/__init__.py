@@ -5,6 +5,8 @@ from .indexing import build_index, get_index_ready
 from .resources import (
     RagDataError,
     data_status,
+    embedding_dimension,
+    ensure_embedding_model,
     get_embedding_model,
     invalidate_resources,
     load_resources,
@@ -16,6 +18,8 @@ __all__ = [
     "build_index",
     "data_status",
     "do_we_have_file_change",
+    "embedding_dimension",
+    "ensure_embedding_model",
     "get_embedding_model",
     "get_index_ready",
     "get_tools",

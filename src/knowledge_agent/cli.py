@@ -24,8 +24,15 @@ from .config import load_agent_specs, public_config
 from .graph import TheWorld, build_graph_with_model
 from .nodes import ToolFaultPolicy
 from .paths import ENV_FILE, PROJECT_ROOT
-from .rag import build_index, data_status, get_tools
+from .rag import (
+    build_index,
+    data_status,
+    embedding_dimension,
+    ensure_embedding_model,
+    get_tools,
+)
 from .rag.documents import do_we_have_file_change
+from .rag.resources import EMBEDDING_MODEL_NAME
 from .tracing import TraceRecorder
 
 
@@ -205,8 +212,38 @@ async def cmd_demo(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# check / build-index / serve
+# setup / check / build-index / serve
 # ---------------------------------------------------------------------------
+def cmd_setup(args: argparse.Namespace) -> int:
+    """下载/加载向量模型，并确保索引存在。"""
+    print(f"准备向量模型：{EMBEDDING_MODEL_NAME}")
+    print("首次运行需要联网下载（默认 HF 镜像 https://hf-mirror.com），已缓存则直接加载。")
+    try:
+        model = ensure_embedding_model(allow_download=True)
+        dimension = embedding_dimension(model)
+    except Exception as exc:  # noqa: BLE001
+        print(f"\n[失败] {type(exc).__name__}: {exc}")
+        print("可尝试：设置 HF_ENDPOINT=https://huggingface.co 后重试，或预先准备 HF 缓存。")
+        return 1
+
+    print(f"模型就绪：{EMBEDDING_MODEL_NAME}（维度 {dimension}）")
+    status = data_status()
+    if not (status.get("sentences_index") and status.get("chunks_index")):
+        print("\n索引缺失，开始构建 ...")
+        try:
+            result = build_index(force=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[失败] {type(exc).__name__}: {exc}")
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    print("\n环境就绪。下一步：")
+    print("  python run.py serve              # 浏览器模式")
+    print("  python run.py demo --case normal # 无 API key 的 Mock 模式")
+    print("  python run.py ask -q \"...\"       # 真实模型 CLI")
+    return 0
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     try:
         from dotenv import load_dotenv
@@ -259,6 +296,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="企业知识问答 Agent（RAG + 双 Guard）",
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    setup = sub.add_parser("setup", help="下载/加载向量模型并检查数据索引")
+    setup.set_defaults(func=cmd_setup)
 
     serve = sub.add_parser("serve", help="启动 HTTP API + 浏览器页面")
     serve.add_argument("--host", default="127.0.0.1")

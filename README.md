@@ -23,16 +23,26 @@
 
 ```powershell
 uv venv .venv --python 3.13
-uv pip install --python .venv\Scripts\python.exe -r requirements.txt
+uv pip install --python .venv\Scripts\python.exe `
+    --index-url https://pypi.tuna.tsinghua.edu.cn/simple `
+    -r requirements.txt
+python run.py setup
 ```
 
-> **torch**：`sentence-transformers` 需要 torch。国内/无 GPU 环境建议单独用 CPU 源安装：
+最省事的方式是双击 **`setup.bat`**：它会创建 `.venv`、安装 `requirements.txt`、下载/加载向量模型并检查索引。它默认使用：
+
+- pip 镜像：`https://pypi.tuna.tsinghua.edu.cn/simple`
+- HuggingFace 镜像：`https://hf-mirror.com`
+
+两个镜像都可以用同名环境变量覆盖（`PIP_INDEX_URL` / `HF_ENDPOINT`）。已经自己装好依赖时，只需执行 `python run.py setup`。
+
+> **向量模型**：`BAAI/bge-small-zh-v1.5` 会在 `setup` / 首次运行时自动下载（默认走 `HF_ENDPOINT=https://hf-mirror.com`），**不需要预先准备 HF 缓存**。已缓存时直接本地加载；离线环境才需要预先放好缓存并显式设置 `HF_HUB_OFFLINE=1`。
+>
+> **torch**：`sentence-transformers` 需要 torch。网络慢或无 GPU 时，可以单独用 CPU 源安装：
 >
 > ```powershell
 > uv pip install --python .venv\Scripts\python.exe torch --index-url https://download.pytorch.org/whl/cpu
 > ```
->
-> 向量模型 `BAAI/bge-small-zh-v1.5` 需要本机已有 HF 缓存；默认 `HF_HUB_OFFLINE=1` 离线加载。
 
 ### 1.2 配置
 
@@ -95,14 +105,51 @@ python run.py ask -q "出差住宿标准是多少？" --fault-tool query_the_doc
 
 覆盖：缺字段判定、引用校验、反馈消息、路由、init_turn、图装配、完整图流转（脚本化模型）、上下文档口、故障注入、Chat-History、Guard 结构化状态、步数上限。
 
+### 1.6 Mock 模式（无 API key）
+
+没有 API key、或不想消耗真实模型额度时，用 `demo` 子命令进入离线 Mock：
+
+```powershell
+# 先确保向量模型就绪（只需一次）
+python run.py setup
+
+# 进入 Mock：不需要 .env / LLM_API_KEY
+python run.py demo --case normal
+```
+
+可选场景：
+
+| `--case` | 场景 |
+|---|---|
+| `normal` | 明确答案 |
+| `conflict` | 文档冲突 |
+| `no-support` | 资料外问题 |
+| `paraphrase` | 改写后的相似问题 |
+| `followup` | 上下文追问 |
+| `tool-failure` | 工具失败（故障注入） |
+
+也可以把 Mock 执行记录写成 Trace：
+
+```powershell
+python run.py demo --case tool-failure --trace examples/offline/tool-failure.json
+```
+
+Mock 模式的行为：
+
+- 使用**真实的主图、真实的 RAG 工具和真实的 Guard 节点**；
+- 主模型回复是预设脚本（`src/knowledge_agent/offline.py`），**不调用 DeepSeek API**；
+- 只验证流程、工具接线和 Guard 通过路径，**不能证明真实模型的决策效果**；真实效果见 `examples/cases/` 的在线 Trace；
+- 仍然需要本地有向量模型（`python run.py setup` 会自动下载），因为 RAG 工具是真实执行的。
+
 ## 2. 项目结构
 
 ```text
 v1/
 ├── README.md
 ├── requirements.txt
-├── run.py                         # 统一入口：serve / ask / demo / build-index / check
+├── run.py                         # 统一入口：setup / serve / ask / demo / build-index / check
 ├── start.bat                      # 一键启动（GBK + CRLF）
+├── setup.bat                      # 一键准备：venv + 依赖 + 向量模型
 ├── .env.example
 ├── src/knowledge_agent/
 │   ├── paths.py                   # 项目路径唯一来源
@@ -114,7 +161,7 @@ v1/
 │   ├── nodes.py                   # Model A / 工具 / Guard / finalize / feedback
 │   ├── graph.py                   # 主图装配 + TheWorld
 │   ├── server.py                  # FastAPI + SSE + Chat-History 落盘
-│   ├── cli.py                     # ask / demo / serve / build-index / check
+│   ├── cli.py                     # setup / ask / demo / serve / build-index / check
 │   ├── tracing.py                 # 执行路径 Trace（JSON / Markdown）
 │   ├── chat_history.py            # 浏览器会话自动保存
 │   ├── offline.py                 # 脚本化模型 + 离线场景
@@ -250,7 +297,8 @@ SupportVerdict(support: Literal["support", "unsupported"],
 | `LLM_BASE_URL` | 自定义接口地址 |
 | `AGENT_SYSTEM_PROMPT` | 覆盖 Model A 系统提示 |
 | `RAG_FAULT_TOOL` / `RAG_FAULT_TIMES` | 工具故障注入（演示工具失败） |
-| `HF_HUB_OFFLINE` / `HF_ENDPOINT` | 向量模型缓存 / 镜像 |
+| `HF_ENDPOINT` | 向量模型下载镜像，默认 `https://hf-mirror.com`；网络允许时可设为 `https://huggingface.co` |
+| `HF_HUB_OFFLINE` | 可选。只有想强制离线、且本机已有模型缓存时才设置 `1` |
 
 ## 6. 已知限制
 
@@ -266,6 +314,8 @@ SupportVerdict(support: Literal["support", "unsupported"],
 | 前端纯文本 | 不渲染 Markdown；长工具结果只截断显示 |
 | 文档格式 | 只支持 `.md` / `.txt`；PDF/Word 需先转换 |
 | 检索 | 仅 bge + FAISS 向量检索，无 reranker / 关键词混合检索 |
+| 首次准备 | `python run.py setup` 需要联网下载 bge 模型；完全离线部署需预先放好 HF 缓存 |
+| Mock 边界 | 脚本化模型不根据工具结果动态决策，只验证流程/接线，不证明真实效果 |
 
 ## 7. 文档索引
 

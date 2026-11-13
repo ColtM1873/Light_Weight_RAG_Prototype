@@ -82,6 +82,7 @@
 ## 6. 如何复核
 
 ```powershell
+python run.py setup          # 首次：下载/加载向量模型
 python run.py check
 .venv\Scripts\python.exe -m pytest tests -q
 python run.py serve          # 打开 8010，按 examples/README.md 的问题逐条试

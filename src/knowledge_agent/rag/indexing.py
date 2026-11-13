@@ -8,18 +8,14 @@ from ..paths import CHUNKS_INDEX_FILE, SENTENCES_INDEX_FILE
 from ..validators import clear_library_cache
 from .chunking import split_it_up
 from .documents import do_we_have_file_change, return_pipeline_list, save_cur_hash
-from .resources import get_embedding_model, invalidate_resources
+from .resources import embedding_dimension, get_embedding_model, invalidate_resources
 from .tools import reset_query_state
 
 
 def _write_index(path: Any, texts: list[str], model: Any) -> None:
     import faiss
 
-    dimension = (
-        model.get_embedding_dimension()
-        if hasattr(model, "get_embedding_dimension")
-        else model.get_sentence_embedding_dimension()
-    )
+    dimension = embedding_dimension(model)
     index = faiss.IndexFlatIP(dimension)
     if texts:
         vectors = model.encode(

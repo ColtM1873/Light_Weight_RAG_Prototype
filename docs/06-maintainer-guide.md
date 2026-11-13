@@ -7,6 +7,7 @@
 | 文件 | 职责 | 修改时注意 |
 |---|---|---|
 | `run.py` | 把 `src/` 加入 `sys.path`，转交 CLI | 只做引导，不放业务 |
+| `cli.py` | `setup` / `serve` / `ask` / `demo` / `build-index` / `check` | 示例生成入口 |
 | `src/knowledge_agent/paths.py` | 所有路径的唯一来源 | 数据/静态资源路径都从这里取 |
 | `config.py` | `.env` 读取、Model A 系统提示、可安全打印的配置摘要 | 不要把 key 打进日志 |
 | `state.py` | LangGraph 扩展状态 | 新字段要在这里声明，并在 `init_turn` 给初值 |
@@ -21,7 +22,7 @@
 | `chat_history.py` | 浏览器会话 JSON/Markdown/索引 | 线程安全、原子写 |
 | `offline.py` | 脚本化模型 + 离线场景 | 主模型回复是预设脚本，明确标注边界 |
 | `static/index.html` | 单页前端（纯文本） | SSE 事件类型见 `server.py` |
-| `rag/resources.py` | 懒加载 bge/FAISS/solid 数据 | import 时不要读大文件 |
+| `rag/resources.py` | 懒加载 bge/FAISS/solid 数据；首次使用自动下载模型 | import 时不要读大文件 |
 | `rag/tools.py` | 四个 RAG 工具 + 会话翻页状态 | 工具异常必须转字符串 |
 | `rag/documents.py` | 扫描/ID/版本日期/hash | hash 变化触发重建 |
 | `rag/chunking.py` | 分句/分块 | 上线前看 chunk 边界 |
@@ -114,6 +115,7 @@ python run.py check
 ## 4. 调试
 
 ```powershell
+python run.py setup                 # 首次：下载/加载向量模型
 python run.py check                 # 配置/数据/索引/hash
 python run.py build-index --force   # 强制重建
 python run.py demo --case normal    # 离线看图/工具

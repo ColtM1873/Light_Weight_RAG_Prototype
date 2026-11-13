@@ -73,7 +73,7 @@
 
 ## 6. 成功标准
 
-- 能按 README 的命令从零启动（安装依赖、配置 `.env`、`python run.py serve`）；
+- 能按 README 的命令从零启动（安装依赖、`python run.py setup` 下载模型、配置 `.env`、`python run.py serve`）；
 - 44 个测试全部通过；
 - `examples/` 至少 3 组输入/输出/Trace，且覆盖上表全部验收点；
 - Guard 1 / Guard 2 在每条在线 Trace 中都有可核对的结构化结果；
@@ -86,4 +86,4 @@
 - 文档为合成资料，不含真实个人信息或商业机密；
 - 问题假设用户愿意在文档范围内讨论；纯闲聊问题可能被 Guard 要求补引用（见 03 评估的已知限制）；
 - 模型效果依赖 `deepseek-chat` 的当前版本；项目提供离线 Mock 只验证流程，不证明真实决策效果；
-- 向量模型需要本机 HF 缓存；没有缓存时可按 README 联网下载。
+- 向量模型由 `python run.py setup` 在首次运行时自动下载（默认 HF 镜像）；完全离线时才需要预先准备缓存并设置 `HF_HUB_OFFLINE=1`；

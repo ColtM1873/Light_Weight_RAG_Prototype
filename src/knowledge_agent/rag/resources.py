@@ -11,19 +11,27 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-# 必须在导入 sentence_transformers 之前设置；默认用本机缓存离线加载。
-os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-
 from ..paths import (  # noqa: E402
     CHUNKS_FILE,
     CHUNKS_INDEX_FILE,
+    ENV_FILE,
     PROJECT_ROOT,
     REF_FILES_DIR,
     SENTENCES_FILE,
     SENTENCES_INDEX_FILE,
     resolve_project_path,
 )
+
+try:  # 让 .env 里的 HF_ENDPOINT / HF_HUB_OFFLINE 对所有命令生效
+    from dotenv import load_dotenv
+
+    load_dotenv(ENV_FILE, override=False)
+except ImportError:  # pragma: no cover
+    pass
+
+# 必须在导入 sentence_transformers 之前设置。
+# 默认使用国内镜像；首次使用会自动下载模型，不在代码里强制 HF_HUB_OFFLINE。
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 EMBEDDING_MODEL_NAME = "BAAI/bge-small-zh-v1.5"
 QUERY_PREFIX = "为这个句子生成表示以用于检索相关文章："
@@ -58,17 +66,50 @@ _resources: RagResources | None = None
 _embedding_model: Any = None
 
 
-def get_embedding_model() -> Any:
-    """懒加载 bge 向量模型（首次调用会花几秒）。"""
+def _load_embedding_model(allow_download: bool = True) -> Any:
+    """先尝试本地缓存；缓存不存在时自动联网下载（除非显式禁止）。"""
+    from sentence_transformers import SentenceTransformer
+
+    try:
+        # 已缓存时走本地加载，避免每次都探测 Hub。
+        return SentenceTransformer(EMBEDDING_MODEL_NAME, local_files_only=True)
+    except Exception as local_exc:  # noqa: BLE001 - 缓存缺失/损坏时回退下载
+        if not allow_download:
+            raise RuntimeError(
+                f"向量模型 {EMBEDDING_MODEL_NAME} 不在本地缓存，且当前禁止下载。"
+                "请运行 `python run.py setup`，或预先准备 HF 缓存。"
+            ) from local_exc
+        try:
+            return SentenceTransformer(EMBEDDING_MODEL_NAME, local_files_only=False)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError(
+                f"无法加载向量模型 {EMBEDDING_MODEL_NAME}。"
+                "首次使用需要联网下载，请运行 `python run.py setup`；"
+                "如果网络受限，可设置 HF_ENDPOINT（默认 https://hf-mirror.com）"
+                "或预先准备 HF 缓存。"
+                f"原始错误：{type(exc).__name__}: {exc}"
+            ) from exc
+
+
+def get_embedding_model(allow_download: bool = True) -> Any:
+    """懒加载 bge 向量模型（首次调用会自动下载/加载，约几秒到几十秒）。"""
     global _embedding_model
     if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
-
-        # 模型已在本机缓存；local_files_only 避免离线环境下反复探测 Hub。
-        _embedding_model = SentenceTransformer(
-            EMBEDDING_MODEL_NAME, local_files_only=True
-        )
+        _embedding_model = _load_embedding_model(allow_download=allow_download)
     return _embedding_model
+
+
+def ensure_embedding_model(allow_download: bool = True) -> Any:
+    """`run.py setup` 使用的显式入口：确保模型可用。"""
+    return get_embedding_model(allow_download=allow_download)
+
+
+def embedding_dimension(model: Any) -> int:
+    """兼容 sentence-transformers 新旧版本的维度读取。"""
+    getter = getattr(model, "get_embedding_dimension", None) or getattr(
+        model, "get_sentence_embedding_dimension"
+    )
+    return int(getter())
 
 
 def _build_document_meta(sentences: list[dict], chunks: list[dict]) -> dict[int, dict]:
@@ -179,6 +220,7 @@ def data_status() -> dict[str, Any]:
         "document_count": None,
         "sentence_count": None,
         "chunk_count": None,
+        "embedding_model": EMBEDDING_MODEL_NAME,
         "error": None,
     }
     try:
