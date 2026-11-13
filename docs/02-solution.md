@@ -64,10 +64,66 @@ call_main_llm（Model A）
 
 ## 4. 技术取舍
 
-1. RAG检索采用faiss库，而非更重的方案。理由：追求轻量化，更多的底层暴露和更多的行为掌控（自定义）。
-2. RAG检索采取flat暴力，而非工业界标准HNSW。理由：这个案例下，假设有1000个文档，每个文档100条向量，也才十万条向量，通常HNSW在百万向量级别才会在现代CPU下跟flat拉开可感知的差距（高并发情况可以压到十万条）。这个案例用flat是直白的。而且HNSW相较于flat有结构性的召回率低于100%问题，在边界情况下可能会漏。
-3. 使用LangGraph。理由：LangGraph底层编排顺手，实现循环直观清晰，偏底层，能够自行创造很多编排结构，适合本案例这种添加多道循环逻辑的情况。（添加两个守卫）
-4. 双粒度检索。理由：案例对于召回率要求很苛刻，与其纠结什么样的检索粒度最优，不如直接采取多粒度检索。
-5. 标点切分。理由：不按照原始RAG按照字符数量硬切分，有利于语义保留，改善检索质量。
-6. 采取标点切分的前提下，仍然采用overlap。理由：有利于语义保留，改善检索质量。
-7. 用普通消息列表作为主线，用两个无记忆json返回作为结点进行Guard验证逻辑。理由：json返回天生对于传统消息链不够友好，对于校验友好。**被各大模型广泛支持的持续性上下文**依赖**传统消息链**，把两者结合起来最切合题意。
+| # | 取舍 | 理由 |
+|---|---|---|
+| 1 | RAG检索采用**faiss**库，而非更重的方案。 | 理由：追求轻量化，更多的底层暴露和更多的行为掌控（自定义）。 |
+| 2 | RAG检索采取**flat暴力**，而非工业界标准HNSW。 | 理由：这个案例下，假设有1000个文档，每个文档100条向量，也才十万条向量，通常HNSW在百万向量级别才会在现代CPU下跟flat拉开可感知的差距（高并发情况可以压到十万条）。这个案例用flat是直白的。而且HNSW相较于flat有结构性的召回率低于100%问题，在边界情况下可能会漏。 |
+| 3 | 使用**LangGraph**。 | 理由：LangGraph底层编排顺手，实现循环直观清晰，偏底层，能够自行创造很多编排结构，适合本案例这种添加多道循环逻辑的情况。（添加两个守卫） |
+| 4 | **双粒度检索**。 | 理由：案例对于召回率要求很苛刻，与其纠结什么样的检索粒度最优，不如直接采取多粒度检索。 |
+| 5 | **标点切分**。 | 理由：不按照原始RAG按照字符数量硬切分，有利于语义保留，改善检索质量。 |
+| 6 | 采取标点切分的前提下，仍然采用**overlap**。 | 理由：有利于语义保留，改善检索质量。 |
+| 7 | 用普通消息列表作为主线，用两个无记忆**json返回**作为结点进行Guard验证逻辑。 | 理由：json返回天生对于传统消息链不够友好，对于校验友好。**被各大模型广泛支持的持续性上下文**依赖**传统消息链**，把两者结合起来最切合题意。 |
+
+## 5. 框架版本与职责
+
+| 组件 | 版本（验证环境） | 使用的功能 | 承担职责 |
+|---|---|---|---|
+| Python | 3.13.4 | — | 运行环境 |
+| LangGraph | 1.2.21 | `StateGraph` / `Command(goto=...)` / conditional edges / `InMemorySaver` / `astream` | 主图、工具循环、检查点、流式事件 |
+| LangChain | 1.5.0 | `init_chat_model` / `bind_tools` / `with_structured_output` | 模型接入、工具绑定、结构化输出 |
+| langchain-core | 1.8.0 | Messages / `@tool` / `InjectedToolArg` | 消息与工具协议 |
+| langchain-deepseek | 1.1.1 | DeepSeek provider | `deepseek-chat` |
+| langchain-openai | 1.8.0 | OpenAI 兼容 provider | 可选 provider |
+| FastAPI | 0.162.7 | 路由、`StreamingResponse` | HTTP API + SSE |
+| uvicorn | 0.54.0 | ASGI server | 本地服务 |
+| sentence-transformers | 6.3.0 | `BAAI/bge-small-zh-v1.5` | 向量编码 |
+| faiss-cpu | 1.16.0 | `IndexFlatIP` / `serialize_index` | 向量检索 |
+| pydantic | 2.14.3 | `BaseModel` | 结构化 schema |
+| pytest | 8.x | — | 单元/集成测试 |
+
+> 向量模型不随 pip 包一起安装：`python run.py setup` 首次运行时从 `HF_ENDPOINT`（默认 `https://hf-mirror.com`）自动下载到 HF 缓存；`setup.bat` 同时配置 pip 镜像和 HF 镜像。
+
+## 6. 数据管线与工程细节
+
+```text
+data/ref_files/*.md
+  → documents.scan_files()        # 文件名 Dxxx、版本日期、mtime、相对路径
+  → documents.classify()          # ID 分配（无 ID 的从 1000 开始）
+  → chunking.split_it_up()        # 按中文标点分句（≤512 字），合并成 ~300 字块
+  → data/solid_sentences.json
+  → data/solid_chunks.json
+  → indexing.build_index()        # bge 编码 + FAISS IndexFlatIP
+  → data/index_sentences.faiss / index_chunks.faiss
+  → data/ref_files_hash.hash      # 文件名 + 内容 hash，变化时重建
+```
+
+- solid 数据中保存**相对仓库根**的路径，仓库搬家/提交后仍可用；
+- FAISS 的 C++ `fopen` 不支持中文路径，改用 `serialize_index` + Python 写文件；
+- 资源懒加载：import 不加载模型/大文件，测试和 `--help` 不受影响；
+- 索引重建后清空引用校验缓存、资源缓存和查询翻页状态；
+- 同一 `thread_id` 内的查询翻页状态隔离，避免多会话串味。
+
+## 7. 关键错误处理
+
+| 场景 | 处理 |
+|---|---|
+| `.env` 缺 key | `load_agent_specs` 抛明确错误，CLI 返回 2 |
+| 数据/索引缺失 | 工具返回“请先 build-index”，图仍可运行 |
+| hash 检查失败 | 记录 `index_rebuild_error`，不阻塞问答 |
+| 索引重建失败 | 记录错误，继续用旧索引/无工具路径 |
+| 工具异常 | ToolMessage 返回失败信息，模型决定重试/换工具/说明 |
+| Model B 解析失败 | 按缺字段处理，最多 2 次 |
+| Model C 解析失败 | 最多 5 次，仍失败按 unsupported 反馈 |
+| 模型循环 | `step_count >= 100` → `step_limit`，输出本轮未完成 |
+| SSE 异常 | 推送 `failed` 事件，不直接断连接 |
+| Chat-History 写入失败 | 打印日志，不影响主流程 |
