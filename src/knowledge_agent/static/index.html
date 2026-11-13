@@ -16,6 +16,21 @@
     }
     h2 { margin: 0 0 4px; font-size: 21px; }
     .hint { color: #666; font-size: 13px; margin-bottom: 12px; line-height: 1.6; }
+    .notice {
+      border: 1px solid #f1dfa6;
+      background: #fff8e1;
+      color: #6b4e00;
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-size: 13px;
+      line-height: 1.6;
+      margin-bottom: 12px;
+    }
+    .notice code {
+      background: #fff1c7;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
     .chip {
       border: 1px solid #d7dde5; background: #f7f9fc; color: #2f5f9e;
@@ -90,6 +105,11 @@
   <div class="hint">
     回答流程：检索文档 → 观察结果 → 补充检索 / 读全文 / 查版本日期 → 作答 → 引用与证据双 Guard 校验。<br />
     Human / Tool / AI 消息按执行顺序出现；紫色卡片是 Guard 判定，蓝色卡片是本轮结构化任务状态（引用 / 资料缺口 / 完成状态）。纯文本显示，不渲染 Markdown。
+  </div>
+
+  <div class="notice">
+    <strong>数据更新提示：</strong>修改 <code>data/ref_files/</code> 内的文档后，请刷新本页面（Ctrl+F5）再提问；
+    服务端会在新一轮开始时检测文档 hash 并重建索引。刷新页面会开启新的会话。
   </div>
 
   <div class="chips">

@@ -71,6 +71,8 @@ python run.py build-index --force
 python run.py check
 ```
 
+> 如果服务已经在运行：修改 `data/ref_files/` 内的文档后，请在浏览器**刷新页面（Ctrl+F5）**再提问；服务端会在新一轮开始时检测文档 hash 并重建索引。刷新页面也会开启新的会话。
+
 ### 1.4 启动
 
 ```powershell
