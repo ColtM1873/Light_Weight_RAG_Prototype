@@ -34,7 +34,7 @@ def validate_date(s : str) -> bool:
 def get_version_date( path : Path):
     with path.open(encoding = "utf-8" ) as file:
         first_line = file.readline().strip().lstrip("\ufeff")
-        match_here = re_version_date.match
+        match_here = re_version_date.match(first_line)
         if match_here:
             version_date = match_here.group(1)
             if validate_date(version_date):
@@ -70,9 +70,8 @@ def do_we_have_file_change() -> bool:
         return True
     else:
         cur_hash : str = calc_total_hash()
-        with path_hash_file.open("rt") as file:
-            old_hash = file.read_text( encoding = "utf-8" )
-            old_hash = old_hash.strip().lstrip("\ufeff")
+        with path_hash_file.open("rt", encoding="utf-8") as file:
+            old_hash = file.read().strip().lstrip("\ufeff")
             if cur_hash == old_hash:
                 return False
             else:
@@ -80,8 +79,8 @@ def do_we_have_file_change() -> bool:
 
 def save_cur_hash():
     cur_hash: str = calc_total_hash()
-    with path_hash_file.open("wt") as file:
-        file.write_text( cur_hash , encoding = "utf-8" )
+    with path_hash_file.open("wt", encoding="utf-8") as file:
+        file.write(cur_hash)
 
 def scan_files( docs_dir : str | Path = ref_files_dir ) -> list[dict]:
     docs_dir = Path(docs_dir)

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>轻量 RAG · Guard 演示</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      max-width: 920px;
+      margin: 28px auto;
+      padding: 0 16px 40px;
+      color: #222;
+    }
+    h2 { margin: 0 0 4px; font-size: 20px; }
+    .hint { color: #777; font-size: 13px; margin-bottom: 14px; }
+    #log {
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 12px;
+      min-height: 320px;
+      max-height: 68vh;
+      overflow-y: auto;
+      background: #fafafa;
+    }
+    .msg {
+      margin: 10px 0;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+    }
+    .msg .meta {
+      font-size: 11px;
+      letter-spacing: .02em;
+      color: #666;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+    }
+    .msg .body {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .human { background: #e8f1fd; border-color: #c6dcf7; }
+    .ai    { background: #e9f7ec; border-color: #c3e6cb; }
+    .tool  { background: #fff8e1; border-color: #f1dfa6; }
+    .tool .body { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+    .error { background: #fdecea; border-color: #f5c6cb; }
+    .row { display: flex; gap: 10px; margin-top: 14px; }
+    input {
+      flex: 1;
+      padding: 11px 14px;
+      font-size: 15px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      outline: none;
+    }
+    input:focus { border-color: #6a9ee8; }
+    button {
+      padding: 11px 20px;
+      font-size: 15px;
+      border: none;
+      border-radius: 8px;
+      background: #2f6fd0;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { background: #9db8dc; cursor: default; }
+  </style>
+</head>
+<body>
+  <h2>轻量 RAG · Guard 演示</h2>
+  <div class="hint">Human / Tool / AI 消息会按执行顺序逐条出现（纯文本，不渲染 Markdown）。</div>
+  <div id="log"></div>
+  <div class="row">
+    <input id="q" placeholder="输入问题，例如：出差住宿标准是多少？" autocomplete="off" />
+    <button id="send">发送</button>
+  </div>
+
+  <script>
+    const logEl = document.getElementById("log");
+    const inputEl = document.getElementById("q");
+    const sendBtn = document.getElementById("send");
+    const threadId = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()));
+    const MAX_TOOL_CHARS = 1000;
+    let busy = false;
+
+    function renderContent(type, content) {
+      if (type === "tool" && content.length > MAX_TOOL_CHARS) {
+        return content.slice(0, MAX_TOOL_CHARS) +
+          "\n…（已截断，完整内容 " + content.length + " 字）";
+      }
+      return content;
+    }
+
+    function append(type, label, content) {
+      const box = document.createElement("div");
+      box.className = "msg " + type;
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = label;
+
+      const body = document.createElement("div");
+      body.className = "body";
+      body.textContent = content;
+
+      box.appendChild(meta);
+      box.appendChild(body);
+      logEl.appendChild(box);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setBusy(value) {
+      busy = value;
+      sendBtn.disabled = value;
+      sendBtn.textContent = value ? "处理中…" : "发送";
+    }
+
+    function send() {
+      const text = inputEl.value.trim();
+      if (!text || busy) return;
+
+      inputEl.value = "";
+      append("human", "Human（你）", text);
+      setBusy(true);
+
+      const url =
+        "/api/chat?message=" + encodeURIComponent(text) +
+        "&thread_id=" + encodeURIComponent(threadId);
+      const es = new EventSource(url);
+
+      es.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          append(data.type, data.label, renderContent(data.type, data.content));
+        } catch (err) {
+          console.error("无法解析消息：", err);
+        }
+      };
+
+      es.addEventListener("done", () => {
+        es.close();
+        setBusy(false);
+      });
+
+      es.addEventListener("failed", (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          append("error", "错误", data.message);
+        } catch (err) {
+          append("error", "错误", "请求失败");
+        }
+        es.close();
+        setBusy(false);
+      });
+
+      es.onerror = () => {
+        if (es.readyState === EventSource.CLOSED) {
+          setBusy(false);
+        }
+      };
+    }
+
+    sendBtn.addEventListener("click", send);
+    inputEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") send();
+    });
+  </script>
+</body>
+</html>

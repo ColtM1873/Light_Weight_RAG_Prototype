@@ -1,163 +1,167 @@
-import uuid
-import langchain_core
+"""主图：Model A（工具循环）+ Guard 层。
+
+图结构（详见 guard_plan.md）::
+
+    START -> init_turn -> call_main_llm (Model A)
+                             |  tool_calls 非空 -> tool_node -> 回 call_main_llm
+                             |  tool_calls 为空  -> guard_parse (Model B + 代码校验)
+                                                     |  缺字段/引用错 -> feedback -> 回 call_main_llm
+                                                     |  pass -> guard_support (Model C)
+                                                                 |  unsupported -> feedback -> 回 call_main_llm
+                                                                 |  support 且无反馈 -> END
+                                                                 |  support 且有反馈 -> finalize -> 回 call_main_llm
+                                                                                        (phase=final)
+                                                                                        -> END（不再校验）
+
+范围：只实现规划中的 Model A + Guard 链路。
+"""
+
+from __future__ import annotations
+
+import os
+import warnings
+from pathlib import Path
 from typing import Any
-from langchain.messages import RemoveMessage
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage , AIMessage
+
 from langchain.chat_models import init_chat_model
-from typing_extensions import Annotated
-from langgraph.types import interrupt , Command
-from langchain_core.tools.structured import StructuredTool
-from langchain_huggingface import HuggingFaceEmbeddings
-from variant_message_state import ExtendedMessagesState
-from various_prompts import summery_promt,ReAct_system_prompt
-from sub_agent_sub_graph_factory_new import build_sub_agent
+from langgraph.graph.state import CompiledStateGraph, END, START, StateGraph
 from langgraph.types import RetryPolicy
-from langgraph.graph.state import CompiledStateGraph,StateGraph,START,END
+
+from guard_nodes import make_guard_nodes, route_after_model_a
+from variant_message_state import ExtendedMessagesState
+
+system_prompt = """
+你是一个企业知识问答小助手。你需要借助文档检索等工具，帮助员工找到制度或产品问题的可靠答案。
+必须要文档完全支持才可以给出明确答复，不能靠自己臆测。
+要注意文档中的细微措辞要求，以及提及的使用范围和条件。如果文档之间明确说明有优先级还有考虑优先级覆盖问题。
+如果没有文档资料完全地，明确地支持回答，就不要给出明确的答复，而是只给出相关信息。
+如果多个文档内容互相冲突，在没有完全明确的规定指出某个文档可以override其他文档时，应当列出冲突，让用户再进行确认，不要给出答案。
+最终，你需要答复用户你的自然语言回复，包括文档明确支持时的回复和文档不明确支持时的解释等等。
+以及结构化的状态，包括：引用文档的ID以及相应的检索返回内容（原文片段），资料的缺口，以及任务的状态（是否完成，是否文档冲突，是否无文档可以支撑）
+注意：引用只给出文档ID和原文片段即可，片段ID、片段类型等属于内部实现细节，不要出现在给用户的回复里。
+"""
 
 
-"""  --- Under Construction ---
-from query_it_up import get_tools
+ENV_FILE = Path(__file__).resolve().parent / ".env"
+
+
+def load_agent_specs() -> dict[str, Any]:
+    """从项目根目录的 .env（或环境变量）读取模型配置。"""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        pass
+    else:
+        load_dotenv(ENV_FILE)
+
+    provider = (os.getenv("LLM_PROVIDER") or "deepseek").strip()
+    model = (os.getenv("LLM_MODEL") or "deepseek-chat").strip()
+    api_key = (os.getenv("LLM_API_KEY") or "").strip()
+    if not api_key:
+        api_key = (os.getenv(f"{provider.upper()}_API_KEY") or "").strip()
+    if not api_key:
+        raise RuntimeError(f"没有找到 API key：请在 {ENV_FILE} 里填写 LLM_API_KEY=...")
+
+    specs: dict[str, Any] = {
+        "llm_provider_name": model,
+        "model_provider": provider,
+        "model_api_key": api_key,
+    }
+    base_url = (os.getenv("LLM_BASE_URL") or "").strip()
+    if base_url:
+        specs["base_url"] = base_url
+    system_prompt_override = os.getenv("AGENT_SYSTEM_PROMPT")
+    if system_prompt_override:
+        specs["agent_system_prompt"] = system_prompt_override
+    return specs
+
 
 async def TheWorld(
-                thread_checkpoint,
-                main_agent_specs : dict[str , Any],
-                ) -> CompiledStateGraph:
+    thread_checkpoint: Any,
+    main_agent_specs: dict[str, Any] | None = None,
+) -> CompiledStateGraph:
+    """构建主图。
 
-    await thread_checkpoint.setup()
+    main_agent_specs 需要包含：
+        llm_provider_name: 模型名（如 "deepseek-chat" 或 "deepseek:deepseek-chat"）
+        model_api_key:     API key
+        model_provider:    （可选）provider 名，如 "deepseek"
+        agent_system_prompt:（可选）覆盖默认 system_prompt
+    """
+    if main_agent_specs is None:
+        main_agent_specs = load_agent_specs()
 
+    setup = getattr(thread_checkpoint, "setup", None)
+    if setup is not None:
+        await setup()
 
-    main_model = init_chat_model(model = main_agent_specs["llm_provider_name"] , 
-                                    api_key = main_agent_specs["model_api_key"])
-    main_system_prompt = main_agent_specs["agent_system_prompt"]
-    rag_tools = await get_tools()
-    
-#______________________________________ main_graph _____________________________________________________________________________
-#______________________________________ main_graph _____________________________________________________________________________
-#______________________________________ memory_tools _____________________________________________________________________________
+    init_kwargs: dict[str, Any] = {
+        "model": main_agent_specs["llm_provider_name"],
+        "api_key": main_agent_specs.get("model_api_key"),
+    }
+    provider = main_agent_specs.get("model_provider")
+    if provider:
+        init_kwargs["model_provider"] = provider
+    if main_agent_specs.get("base_url"):
+        init_kwargs["base_url"] = main_agent_specs["base_url"]
+    main_model = init_chat_model(**init_kwargs)
+    main_system_prompt = main_agent_specs.get("agent_system_prompt") or system_prompt
 
-    main_model_with_tools = main_model.bind_tools(rag_tools)
+    # RAG 工具：data/ 与索引尚未生成时降级为空工具列表，主图仍可运行。
+    rag_tools: list[Any] = []
+    try:
+        from query_it_up import get_tools
 
-#______________________________________ main_graph ______________________________________________________________________
-    main_agent_builder = StateGraph(ExtendedMessagesState)
+        rag_tools = await get_tools()
+    except Exception as exc:  # noqa: BLE001
+        warnings.warn(
+            f"RAG 工具加载失败，将不绑定工具：{type(exc).__name__}: {exc}",
+            stacklevel=2,
+        )
 
+    tools_by_name = {tool.name: tool for tool in rag_tools}
+    main_model_with_tools = main_model.bind_tools(rag_tools) if rag_tools else main_model
 
-#______________________________________ main_graph _______________________________________________________________________________________________________________
-    async def we_dont_want_unresponded_human_msg (state):
-        msg_list = state["messages"]
-        len_msg_list = len(msg_list)
-        if len_msg_list >= 2:
-            last_second_msg = msg_list[-2]
-            if isinstance(last_second_msg , HumanMessage):
-                return Command(goto = "we_dont_want_unresponded_human_msg",
-                               update= {  "messages" : [RemoveMessage ( id = last_second_msg.id)] })
-            else:
-                return Command(goto= "extract_human_message")
-        else:
-            return Command(goto= "extract_human_message")
-    (
-        main_agent_builder
-        .add_node("we_dont_want_unresponded_human_msg" , we_dont_want_unresponded_human_msg)
-        .add_edge(START , "we_dont_want_unresponded_human_msg")
+    nodes = make_guard_nodes(
+        main_model=main_model,
+        main_model_with_tools=main_model_with_tools,
+        main_system_prompt=main_system_prompt,
+        tools_by_name=tools_by_name,
     )
 
-    async def call_main_llm (state: ExtendedMessagesState ):
-        msg_list = state.get("messages", [])
-        feed_in_msg_list = (
-            [SystemMessage(content= main_system_prompt )]
-            + msg_list
-            )
-        
-        response = await main_model_with_tools.ainvoke(feed_in_msg_list )
-        return {"messages" : [response] }
-    
-    async def route_to_func( state : ExtendedMessagesState):
-        node_list = []
-        tool_node_bool = False
-        for agent_call in state["messages"][-1].tool_calls:
-    
-    async def tool_node_front(state: ExtendedMessagesState):
-        result = []
-        for tool_call in state["messages"][-1].tool_calls:
-            tool_name = tool_call["name"]
-            if tool_name not in main_nonagent_tools_by_name:
-                result.append(ToolMessage(
-                    content="tool call invalid, tools could be dynamically attached or removed, please make sure this tool still remains in your tool_list",
-                    tool_call_id=tool_call["id"],
-                    name = tool_name
-                    ))
-                continue
-            tool = main_nonagent_tools_by_name[tool_name]
-            try:
-                observation = await tool.ainvoke(tool_call["args"])
-                result.append(ToolMessage(
-                    content=observation,
-                    tool_call_id=tool_call["id"],
-                    name = tool_name
-                    ))
-            except Exception as e:
-                result.append(ToolMessage(
-                    content=str(e),
-                    tool_call_id=tool_call["id"],
-                    name = tool_name
-                    ))
-        return {"messages": result}
+    return assemble_graph(nodes, thread_checkpoint)
 
-    async def tool_node(state: ExtendedMessagesState):
-        result = []
-        for tool_call in state["messages"][-1].tool_calls:
-            tool_name = tool_call["name"]
-            if tool_name not in main_nonagent_tools_by_name:
-                result.append(ToolMessage(
-                    content="You are not supposed to call this tool when depicting HTML report.",
-                    tool_call_id=tool_call["id"],
-                    name = tool_name
-                    ))
-                continue
-            tool = main_nonagent_tools_by_name[tool_name]
-            try:
-                observation = await tool.ainvoke(tool_call["args"])
-                result.append(ToolMessage(
-                    content=observation,
-                    tool_call_id=tool_call["id"],
-                    name = tool_name
-                    ))
-            except Exception as e:
-                result.append(ToolMessage(
-                    content=str(e),
-                    tool_call_id=tool_call["id"],
-                    name = tool_name
-                    ))
-        return {"messages": result}
 
-    async def should_continue_main(state:ExtendedMessagesState):
-        if state["messages"][-1].tool_calls:
-            return "tool_node"
-        else:
-            return END
-    
-    list_of_str_subgraphs = [tool.name for tool in sub_agent_tools]
+def assemble_graph(
+    nodes: dict[str, Any], checkpointer: Any = None
+) -> CompiledStateGraph:
+    """把 Guard 节点装配成主图（与具体模型解耦，便于测试）。"""
+    builder = StateGraph(ExtendedMessagesState)
 
-    main_agent_builder.add_node(query_to_produce_html)
-    main_agent_builder.add_node(produce_html_call_llm , retry_policy= RetryPolicy(max_attempts=3))
-    main_agent_builder.add_node(tool_node , retry_policy= RetryPolicy(max_attempts=3))
+    builder.add_node("init_turn", nodes["init_turn"])
+    builder.add_node(
+        "call_main_llm", nodes["call_main_llm"], retry_policy=RetryPolicy(max_attempts=3)
+    )
+    builder.add_node(
+        "tool_node", nodes["tool_node"], retry_policy=RetryPolicy(max_attempts=3)
+    )
+    builder.add_node("guard_parse", nodes["guard_parse"])
+    builder.add_node("guard_support", nodes["guard_support"])
+    builder.add_node("finalize", nodes["finalize"])
+    builder.add_node("feedback", nodes["feedback"])
+    builder.add_node("step_limit", nodes["step_limit"])
 
-    main_agent_builder.add_node(delegate_instructions)
-    main_agent_builder.add_node(consume_submitted_reports)
-    main_agent_builder.add_node(tool_node_front , retry_policy= RetryPolicy(max_attempts=3))
-    for name,subgraph in sub_agent_dict.items():
-        main_agent_builder.add_node(name,subgraph , retry_policy= RetryPolicy(max_attempts=3))
-    main_agent_builder.add_edge("call_main_llm" , "delegate_instructions")
-    main_agent_builder.add_conditional_edges("delegate_instructions" , route_to_func )
-    for node in list_of_str_subgraphs:
-        main_agent_builder.add_edge(node , "consume_submitted_reports")
-    main_agent_builder.add_edge("tool_node_front","consume_submitted_reports")
-    main_agent_builder.add_edge("consume_submitted_reports","call_main_llm")
+    builder.add_edge(START, "init_turn")
+    builder.add_edge("tool_node", "call_main_llm")
+    builder.add_conditional_edges(
+        "call_main_llm",
+        route_after_model_a,
+        {
+            "tool_node": "tool_node",
+            "guard_parse": "guard_parse",
+            "step_limit": "step_limit",
+            END: END,
+        },
+    )
 
-    main_agent_builder.add_conditional_edges("produce_html_call_llm" , should_continue_main )
-    main_agent_builder.add_edge("tool_node","produce_html_call_llm")
-
-    main_agent = main_agent_builder.compile(checkpointer= thread_checkpoint , store = store)
-
-    return main_agent
-
-"""
+    return builder.compile(checkpointer=checkpointer)

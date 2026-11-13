@@ -3,10 +3,13 @@
 
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+# 模型已在本机缓存，默认离线加载，避免每次联网检查；需要联网时设 HF_HUB_OFFLINE=0
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import json
 from pathlib import Path
 import faiss
+import numpy as np
 from sentence_transformers import SentenceTransformer
 from langchain_core.tools import tool as langchain_tool
 from typing import Annotated, Literal
@@ -39,8 +42,13 @@ solid_sentences : list[dict] = json.loads(
 solid_chunk : list[dict] = json.loads(
     path_chunks.read_text(encoding="utf-8")
 )
-index_sentences = faiss.read_index(str(path_index_sentences))
-index_chunks = faiss.read_index(str(path_index_chunks))
+# faiss.read_index 的 C++ fopen 不支持中文路径，改用 Python 读文件 + 反序列化
+index_sentences = faiss.deserialize_index(
+    np.frombuffer(path_index_sentences.read_bytes(), dtype="uint8")
+)
+index_chunks = faiss.deserialize_index(
+    np.frombuffer(path_index_chunks.read_bytes(), dtype="uint8")
+)
 # 这四个应该一次运行中，常驻于内存中，直接在这个python文件写一个全局变量是否合适？
 # **需要修改**
 
@@ -189,7 +197,7 @@ async def retrieve_context( piece_id : int , number_of_context_to_retrieve : int
     head_str = "（原文档前面还有内容）" if not bump_head else "（已经抵达原文档开头）"
     rear_str = "（原文档后面还有内容）" if not bump_head else "（已经抵达原文档末尾）"
     head_half.reverse()
-    return_list = [head_str] + head_half + solid_list[piece_id]["content"] + rear_half + [rear_str]
+    return_list = [head_str] + head_half + [solid_list[piece_id]["content"]] + rear_half + [rear_str]
     return return_list
 
 
@@ -211,24 +219,79 @@ async def retrieve_piece_context(
         return "piece_type 错误，只能是 sentence 和 chunk 中的一种"
 
 
+# ---------------------------------------------------------------------------
+# 文档元数据：document_id -> 路径 / 标题 / 版本日期 / mtime
+# ---------------------------------------------------------------------------
+_document_meta_cache: dict[int, dict] | None = None
+
+
+def _build_document_meta() -> dict[int, dict]:
+    """从 solid 数据建立 document_id 到文档元信息的映射（懒加载一次）。"""
+    global _document_meta_cache
+    if _document_meta_cache is not None:
+        return _document_meta_cache
+
+    meta: dict[int, dict] = {}
+    for record in list(solid_sentences) + list(solid_chunk):
+        doc_id = record.get("id")
+        if doc_id is None or doc_id in meta:
+            continue
+        meta[doc_id] = {
+            "path": record.get("path"),
+            "name": record.get("name"),
+            "title": record.get("title"),
+            "version_date": record.get("version_date"),
+            "mtime": record.get("mtime"),
+        }
+    _document_meta_cache = meta
+    return meta
+
+
+def _document_label(meta: dict) -> str:
+    return meta.get("title") or meta.get("name") or "未命名文档"
+
+
 @langchain_tool
 async def read_full_document(
     document_id: Annotated[int, "要阅读全文的文档ID"],
 ) -> str:
     """用来阅读文档的全文。（可能会很长）"""
-# **需要修改** 
-# 需要实现
-# 如果文档hash值跟 solid_xxx 里面的对不上了，在在返回str的最开头加一句 “（文件hash值已经变动，可能跟检索结果有出入/不可信）”
-# **需要修改** 
+    meta = _build_document_meta().get(document_id)
+    if meta is None:
+        return f"文档ID {document_id} 不存在，请核对 document_id。"
+    path = Path(meta["path"])
+    try:
+        body = path.read_text(encoding="utf-8")
+        current_mtime = path.stat().st_mtime
+    except OSError as exc:
+        return f"读取文档失败：{exc}"
+
+    prefix = ""
+    recorded_mtime = meta.get("mtime")
+    if recorded_mtime is not None and abs(current_mtime - recorded_mtime) > 1e-6:
+        prefix = "（文件hash值已经变动，可能跟检索结果有出入/不可信）\n"
+
+    header = (
+        f"【文档 {document_id}：{_document_label(meta)}；"
+        f"版本日期：{meta.get('version_date') or '未声明'}】\n"
+    )
+    return prefix + header + body
+
 
 @langchain_tool
 async def get_version_date(
     document_id: Annotated[int, "要查阅版本日期的文档ID"],
 ) -> str:
     """用来查阅文档的 版本日期，可以再两个文档内容冲突的时候调用这个工具。"""
-# **需要修改** 
-# 需要实现
-# **需要修改** 
+    meta = _build_document_meta().get(document_id)
+    if meta is None:
+        return f"文档ID {document_id} 不存在，请核对 document_id。"
+    version = meta.get("version_date")
+    label = _document_label(meta)
+    if not version:
+        return f"文档ID {document_id}（{label}）没有声明版本日期。"
+    return f"文档ID {document_id}（{label}）的版本日期是 {version}。"
+
 
 async def get_tools():
     return [query_the_docs , retrieve_piece_context, read_full_document, get_version_date]

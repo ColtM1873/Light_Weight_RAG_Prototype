@@ -79,7 +79,7 @@ def split_it_up (sorted_pileline_file_list : list[dict]) -> tuple[list[dict], li
         file_here = sorted_pileline_file_list[i]
 
         # to peel off the first version_date line if exists
-        raw_text_here = file_here["path"] . read_text(encoding = "utf-8")
+        raw_text_here = Path(file_here["path"]).read_text(encoding = "utf-8")
         lines = raw_text_here.splitlines()
         if not lines: # no content
             continue
@@ -90,8 +90,8 @@ def split_it_up (sorted_pileline_file_list : list[dict]) -> tuple[list[dict], li
 
         sentences = get_sentences(raw_text_here)
         chunks = chunk_up(sentences)
-        solid_sentences_here = [ {"content" : s} + file_here for s in sentences ]
-        solid_chunks_here = [ {"content" : chu} + file_here for chu in chunks ]
+        solid_sentences_here = [ {**file_here, "content" : s} for s in sentences ]
+        solid_chunks_here = [ {**file_here, "content" : chu} for chu in chunks ]
         solid_sentences += solid_sentences_here
         solid_chunks += solid_chunks_here
     path_sentences.parent.mkdir( parents = True , exist_ok = True )

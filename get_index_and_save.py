@@ -3,6 +3,8 @@
 
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+# 模型已在本机缓存，默认离线加载，避免每次联网检查；需要联网时设 HF_HUB_OFFLINE=0
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import json
 import re
@@ -31,14 +33,16 @@ def build_index_sentences( solid_sentences: list[dict] ):
     index_here = faiss.IndexFlatIP(d_model)
     list_embed = model.encode( list_content , normalize_embeddings = True )
     index_here.add(list_embed)
-    faiss.write_index ( index_here , str(path_index_sentences) )
+    # faiss.write_index 的 C++ fopen 不支持中文路径，改用序列化后由 Python 写文件
+    path_index_sentences.write_bytes(faiss.serialize_index(index_here).tobytes())
 
 def build_index_chunks ( solid_chunks: list[dict] ):
     list_content = [ s["content"] for s in solid_chunks ]
     index_here = faiss.IndexFlatIP(d_model)
     list_embed = model.encode( list_content , normalize_embeddings = True )
     index_here.add(list_embed)
-    faiss.write_index ( index_here , str(path_index_chunks) )
+    # faiss.write_index 的 C++ fopen 不支持中文路径，改用序列化后由 Python 写文件
+    path_index_chunks.write_bytes(faiss.serialize_index(index_here).tobytes())
 
 def get_index_ready():
     if do_we_have_file_change():
