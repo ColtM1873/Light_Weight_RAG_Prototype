@@ -23,6 +23,7 @@
 
 ```powershell
 uv venv .venv --python 3.13
+.\.venv\Scripts\Activate.ps1
 uv pip install --python .venv\Scripts\python.exe `
     --index-url https://pypi.tuna.tsinghua.edu.cn/simple `
     -r requirements.txt
@@ -41,12 +42,14 @@ python run.py setup
 > **torch**：`sentence-transformers` 需要 torch。网络慢或无 GPU 时，可以单独用 CPU 源安装：
 >
 > ```powershell
+> .\.venv\Scripts\Activate.ps1
 > uv pip install --python .venv\Scripts\python.exe torch --index-url https://download.pytorch.org/whl/cpu
 > ```
 
 ### 1.2 配置
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 Copy-Item .env.example .env
 ```
 
@@ -67,6 +70,7 @@ LLM_API_KEY=sk-...
 文档有增删改时重建：
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 python run.py build-index --force
 python run.py check
 ```
@@ -76,6 +80,7 @@ python run.py check
 ### 1.4 启动
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 python run.py serve
 # 或双击 start.bat（GBK + CRLF）
 ```
@@ -85,6 +90,7 @@ python run.py serve
 CLI 也可以直接跑：
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 # 在线（真实模型）
 python run.py ask -q "出差住宿标准是多少？"
 
@@ -101,6 +107,7 @@ python run.py ask -q "出差住宿标准是多少？" --fault-tool query_the_doc
 ### 1.5 测试
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 .venv\Scripts\python.exe -m pytest tests -q
 # 44 passed
 ```
@@ -112,6 +119,7 @@ python run.py ask -q "出差住宿标准是多少？" --fault-tool query_the_doc
 没有 API key、或不想消耗真实模型额度时，用 `demo` 子命令进入离线 Mock：
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 # 先确保向量模型就绪（只需一次）
 python run.py setup
 
@@ -133,6 +141,7 @@ python run.py demo --case normal
 也可以把 Mock 执行记录写成 Trace：
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 python run.py demo --case tool-failure --trace examples/offline/tool-failure.json
 ```
 
